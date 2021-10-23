@@ -141,6 +141,15 @@ eqv badArgList = throwError $ NumArgs 2 badArgList
 data Unpacker = forall a. Eq a => AnyUnpacker (LispVal -> ThrowsError a)
 
 unpackEquals :: LispVal -> LispVal -> Unpacker -> ThrowsError Bool
+unpackEquals (DottedList xs x) (DottedList ys y) unpacker =
+  unpackEquals (List $ x : xs) (List $ y : ys) unpacker
+unpackEquals (List arg1) (List arg2) unpacker =
+  return $ (length arg1 == length arg2) && all unpackEqPair (zip arg1 arg2)
+  where
+    unpackEqPair (x1, x2) =
+      case unpackEquals x1 x2 unpacker of
+        Left _ -> False
+        Right val -> val
 unpackEquals arg1 arg2 (AnyUnpacker unpacker) =
   ( do
       unpacked1 <- unpacker arg1
@@ -150,9 +159,9 @@ unpackEquals arg1 arg2 (AnyUnpacker unpacker) =
     `catchError` const (return False)
 
 equal :: [LispVal] -> ThrowsError LispVal
-equal [x, y] = do
-    let unpackers = [AnyUnpacker unpackNum, AnyUnpacker unpackStr, AnyUnpacker unpackBool]
-    primitiveEq <- or <$> mapM (unpackEquals x y) unpackers
-    eqvEquals <- eqv [x, y]
-    return $ Bool (primitiveEq || let (Bool x) = eqvEquals in x)
+equal [arg1, arg2] =
+  mapM (unpackEquals arg1 arg2) unpackers
+    >>= \equalResults -> return . Bool . or $ equalResults
+  where
+    unpackers = [AnyUnpacker unpackNum, AnyUnpacker unpackStr, AnyUnpacker unpackBool]
 equal badArgList = throwError $ NumArgs 2 badArgList
