@@ -160,8 +160,7 @@ unpackEquals arg1 arg2 (AnyUnpacker unpacker) =
 
 equal :: [LispVal] -> ThrowsError LispVal
 equal [arg1, arg2] =
-  mapM (unpackEquals arg1 arg2) unpackers
-    >>= \equalResults -> return . Bool . or $ equalResults
+  Bool . or <$> mapM (unpackEquals arg1 arg2) unpackers
   where
     unpackers = [AnyUnpacker unpackNum, AnyUnpacker unpackStr, AnyUnpacker unpackBool]
 equal badArgList = throwError $ NumArgs 2 badArgList
