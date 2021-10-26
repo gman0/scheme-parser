@@ -181,6 +181,7 @@ showError (NotFunction message func) = message ++ ": " ++ show func
 showError (NumArgs expected found) = "Expected " ++ show expected ++ " args, found values " ++ unwordsList found
 showError (TypeMismatch expected found) = "Invalid type: expected " ++ expected ++ ", found " ++ show found
 showError (Parser parseErr) = "Parse error at " ++ show parseErr
+showError (Default message) = "Error: " ++ message
 
 instance Show LispError where
   show = showError
