@@ -6,7 +6,6 @@ library
     hs-source-dirs:   src
     exposed-modules:
         Scheme.Value,
-        Scheme.Eval,
         Scheme.Primitives
     default-language: Haskell2010
     build-depends:

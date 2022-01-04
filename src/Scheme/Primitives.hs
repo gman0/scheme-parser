@@ -9,6 +9,15 @@ import Data.Functor
 import Scheme.Value
 import Text.ParserCombinators.Parsec hiding (spaces)
 
+eval :: LispVal -> ThrowsError LispVal
+eval val@(String _) = return val
+eval val@(Number _) = return val
+eval val@(Bool _) = return val
+eval (List [Atom "quote", val]) = return val
+eval (List [Atom "if", pred, conseq, alt]) = evalIf (pred, conseq, alt)
+eval (List (Atom "cond" : clauses)) = evalCond clauses
+eval (List (Atom func : args)) = mapM eval args >>= apply func
+
 apply :: String -> [LispVal] -> ThrowsError LispVal
 apply func args = maybe (throwError $ NotFunction "Unrecognized primitive function args" func) ($ args) (lookup func primitives)
 
@@ -164,3 +173,72 @@ equal [arg1, arg2] =
   where
     unpackers = [AnyUnpacker unpackNum, AnyUnpacker unpackStr, AnyUnpacker unpackBool]
 equal badArgList = throwError $ NumArgs 2 badArgList
+
+evalBoolPredicate :: LispVal -> ThrowsError LispVal -> ThrowsError LispVal -> ThrowsError LispVal
+evalBoolPredicate pred conseq alt = do
+  result <- eval pred
+  case result of
+    Bool True -> conseq
+    Bool False -> alt
+    _ -> throwError $ TypeMismatch "boolean" result
+
+evalIf :: (LispVal, LispVal, LispVal) -> ThrowsError LispVal
+evalIf (pred, conseq, alt) =
+  evalBoolPredicate pred (return conseq) (return alt)
+
+-- http://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-7.html#%_idx_106
+--
+-- library syntax:  (cond <clause1> <clause2> ...)
+-- Syntax: Each <clause> should be of the form
+--   (<test> <expression1> ...)
+-- where <test> is any expression. Alternatively, a <clause> may be of the form
+--   (<test> => <expression>)
+-- The last <clause> may be an ``else clause,'' which has the form
+--   (else <expression1> <expression2> ...).
+evalCond :: [LispVal] -> ThrowsError LispVal
+evalCond clauses = do
+  clauseExpressions <- findClause clauses
+  evalCondExpressions clauseExpressions
+  where
+    -- Find a clause whose test evaluates to true, or is an `else` clause.
+    findClause :: [LispVal] -> ThrowsError LispVal
+    findClause [] = throwError $ Default "non-exhaustive `cond`"
+    findClause (List (Atom "else" : expressions) : clauses)
+      | null expressions = throwError $ Default "missing expression after `else`"
+      | not $ null clauses = throwError $ Default "`else` must be last clause"
+      | otherwise = return $ List expressions
+    -- Form: (<test> => <expession>)
+    findClause (List (pred : Atom "=>" : expressions) : clauses) = do
+      expression <-
+        case expressions of
+          [x] -> return x
+          _ -> throwError $ Default "exactly one expression must follow after =>"
+      let conseq = return $ List [expression]
+          alt = findClause clauses
+       in evalBoolPredicate pred conseq alt
+    -- Form: (<test> <expression1> ...)
+    findClause (List (pred : expressions) : clauses) =
+      let conseq = return $ List $
+            -- If the selected <clause> contains only the <test> and no
+            -- <expression>s, then the value of the <test> is returned
+            -- as the result.
+            if null expressions then [Bool True] else expressions
+          alt = findClause clauses
+       in evalBoolPredicate pred conseq alt
+    -- Evaluate expressions with the last one's result returned.
+    evalCondExpressions :: LispVal -> ThrowsError LispVal
+    evalCondExpressions (List [x]) = eval x
+    evalCondExpressions (List (x : xs)) = do
+      _ <- eval x
+      evalCondExpressions $ List xs
+
+-- http://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-7.html#%_idx_114
+--
+-- library syntax:  (case <key> <clause1> <clause2> ...)
+-- Syntax: <Key> may be any expression. Each <clause> should have the form
+--   ((<datum1> ...) <expression1> <expression2> ...),
+-- where each <datum> is an external representation of some object.
+-- All the <datum>s must be distinct. The last <clause> may be an
+-- ``else clause,'' which has the form
+--   (else <expression1> <expression2> ...).
+-- evalCase :: [LispVal] -> ThrowsError LispValevalCase

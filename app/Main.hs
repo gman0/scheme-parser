@@ -1,7 +1,6 @@
 module Main where
 
 import Scheme.Value
-import Scheme.Eval
 import Scheme.Primitives
 
 import System.Environment
