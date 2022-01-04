@@ -16,6 +16,7 @@ eval val@(Bool _) = return val
 eval (List [Atom "quote", val]) = return val
 eval (List [Atom "if", pred, conseq, alt]) = evalIf (pred, conseq, alt)
 eval (List (Atom "cond" : clauses)) = evalCond clauses
+eval (List (Atom "case" : key : clauses)) = evalCase key clauses
 eval (List (Atom func : args)) = mapM eval args >>= apply func
 
 apply :: String -> [LispVal] -> ThrowsError LispVal
@@ -186,6 +187,13 @@ evalIf :: (LispVal, LispVal, LispVal) -> ThrowsError LispVal
 evalIf (pred, conseq, alt) =
   evalBoolPredicate pred (return conseq) (return alt)
 
+-- Evaluate expressions with the last one's result returned.
+evalExpressions :: LispVal -> ThrowsError LispVal
+evalExpressions (List [x]) = eval x
+evalExpressions (List (x : xs)) = do
+  _ <- eval x
+  evalExpressions $ List xs
+
 -- http://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-7.html#%_idx_106
 --
 -- library syntax:  (cond <clause1> <clause2> ...)
@@ -198,7 +206,7 @@ evalIf (pred, conseq, alt) =
 evalCond :: [LispVal] -> ThrowsError LispVal
 evalCond clauses = do
   clauseExpressions <- findClause clauses
-  evalCondExpressions clauseExpressions
+  evalExpressions clauseExpressions
   where
     -- Find a clause whose test evaluates to true, or is an `else` clause.
     findClause :: [LispVal] -> ThrowsError LispVal
@@ -218,19 +226,15 @@ evalCond clauses = do
        in evalBoolPredicate pred conseq alt
     -- Form: (<test> <expression1> ...)
     findClause (List (pred : expressions) : clauses) =
-      let conseq = return $ List $
-            -- If the selected <clause> contains only the <test> and no
-            -- <expression>s, then the value of the <test> is returned
-            -- as the result.
-            if null expressions then [Bool True] else expressions
+      let conseq =
+            return $
+              List $
+                -- If the selected <clause> contains only the <test> and no
+                -- <expression>s, then the value of the <test> is returned
+                -- as the result.
+                if null expressions then [Bool True] else expressions
           alt = findClause clauses
        in evalBoolPredicate pred conseq alt
-    -- Evaluate expressions with the last one's result returned.
-    evalCondExpressions :: LispVal -> ThrowsError LispVal
-    evalCondExpressions (List [x]) = eval x
-    evalCondExpressions (List (x : xs)) = do
-      _ <- eval x
-      evalCondExpressions $ List xs
 
 -- http://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-7.html#%_idx_114
 --
@@ -241,4 +245,25 @@ evalCond clauses = do
 -- All the <datum>s must be distinct. The last <clause> may be an
 -- ``else clause,'' which has the form
 --   (else <expression1> <expression2> ...).
--- evalCase :: [LispVal] -> ThrowsError LispValevalCase
+evalCase :: LispVal -> [LispVal] -> ThrowsError LispVal
+evalCase keyExpr clauses = do
+  key <- eval keyExpr
+  clauseExpressions <- findEqvClause key clauses
+  evalExpressions clauseExpressions
+  where
+    findEqvClause :: LispVal -> [LispVal] -> ThrowsError LispVal
+    findEqvClause key [] = throwError $ Default "non-exhaustive `case`"
+    findEqvClause key (List (Atom "else" : expressions) : clauses)
+      | null expressions = throwError $ Default "missing expression after `else`"
+      | not $ null clauses = throwError $ Default "`else` must be last clause"
+      | otherwise = return $ List expressions
+    findEqvClause key (List (List datums : expressions) : clauses) =
+      let match =
+            any
+              ( \x ->
+                  case eqv [key, x] of
+                    Right (Bool True) -> True
+                    _ -> False
+              )
+              datums
+       in if match then return $ List expressions else findEqvClause key clauses
